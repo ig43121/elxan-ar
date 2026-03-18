@@ -248,7 +248,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
-let scene, camera, renderer, controls, canvas;
+let scene, camera, renderer, controls, canvas, gridHelper;
 let loadedModel = null;
 let meshNodeMap = new Map();
 let glbMetadata = null;
@@ -283,8 +283,8 @@ function init() {
   dir.position.set(5, 10, 7); dir.castShadow = true; scene.add(dir);
   scene.add(new THREE.HemisphereLight(0x8892a8, 0x1a2235, 0.4));
 
-  const grid = new THREE.GridHelper(20, 40, 0x2a3555, 0x1a2235);
-  grid.material.opacity = 0.4; grid.material.transparent = true; scene.add(grid);
+  gridHelper = new THREE.GridHelper(20, 40, 0x2a3555, 0x1a2235);
+  gridHelper.material.opacity = 0.4; gridHelper.material.transparent = true; scene.add(gridHelper);
 
   controls = new OrbitControls(camera, canvas);
   controls.enableDamping = true; controls.dampingFactor = 0.08;
@@ -616,21 +616,36 @@ window.startAR = async function() {
 
 async function launchWebXR() {
   try {
-    xrSession = await navigator.xr.requestSession('immersive-ar', {
-      requiredFeatures: ['hit-test'],
-      optionalFeatures: ['dom-overlay', 'light-estimation'],
-      domOverlay: { root: document.getElementById('ar-overlay') }
-    });
-
-    // Save state
+    // Save state BEFORE changing anything
     savedCameraPos = camera.position.clone();
     savedControlsTarget = controls.target.clone();
     savedBackground = scene.background;
 
-    // Setup renderer for XR
+    // MUST enable XR on renderer BEFORE requesting session
     renderer.xr.enabled = true;
-    renderer.setPixelRatio(1);
+    renderer.xr.setReferenceSpaceType('local');
+
+    // Show AR overlay BEFORE session request (needed for dom-overlay root)
+    const arOverlay = document.getElementById('ar-overlay');
+    arOverlay.style.display = 'block';
+
+    // Request WebXR session
+    xrSession = await navigator.xr.requestSession('immersive-ar', {
+      requiredFeatures: ['hit-test'],
+      optionalFeatures: ['dom-overlay'],
+      domOverlay: { root: arOverlay }
+    });
+
+    // Transparent background for camera passthrough
     scene.background = null;
+    renderer.setClearColor(0x000000, 0);
+    renderer.setPixelRatio(1);
+
+    // Hide grid, it would show in AR
+    if (gridHelper) gridHelper.visible = false;
+
+    // Disable orbit controls during AR
+    controls.enabled = false;
 
     // Setup reticle
     if (!arReticle) setupARReticle();
@@ -640,10 +655,9 @@ async function launchWebXR() {
     // Hide model until placed
     if (loadedModel) loadedModel.visible = false;
 
-    // Show AR overlay
-    document.getElementById('ar-overlay').style.display = 'block';
+    // Update status text
     const statusText = urlOrigin
-      ? `📍 QR erkannt: ${urlOrigin.l || urlOrigin.g} — Fläche anvisieren und tippen`
+      ? `📍 ${urlOrigin.l || urlOrigin.g} — Fläche anvisieren und tippen`
       : 'Fläche anvisieren und tippen zum Platzieren';
     document.getElementById('ar-status').textContent = statusText;
     document.getElementById('ar-placed-msg').style.display = 'none';
@@ -653,7 +667,7 @@ async function launchWebXR() {
     document.getElementById('bottom-bar').style.display = 'none';
     hideInfo();
 
-    // Set XR session on renderer
+    // Bind session to renderer
     await renderer.xr.setSession(xrSession);
 
     // Get reference spaces
@@ -669,11 +683,20 @@ async function launchWebXR() {
     // Session end handler
     xrSession.addEventListener('end', onARSessionEnd);
 
-    // XR render loop
+    // Start XR render loop
     renderer.setAnimationLoop(xrRenderLoop);
 
   } catch(err) {
     console.error('AR start error:', err);
+    // Restore state on failure
+    renderer.xr.enabled = false;
+    scene.background = savedBackground || new THREE.Color(0x0a0e17);
+    renderer.setClearColor(0x000000, 1);
+    if (gridHelper) gridHelper.visible = true;
+    controls.enabled = true;
+    document.getElementById('ar-overlay').style.display = 'none';
+    document.getElementById('top-bar').style.display = '';
+    document.getElementById('bottom-bar').style.display = '';
     showArHint();
   }
 }
@@ -740,27 +763,33 @@ function onARSelect(event) {
 function onARSessionEnd() {
   xrSession = null;
   xrHitTestSource = null;
-  renderer.xr.enabled = false;
   modelPlaced = false;
-  urlOrigin = null;
 
-  // Restore renderer
+  // Disable XR mode
+  renderer.xr.enabled = false;
+
+  // Restore renderer settings
   renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
   renderer.setSize(innerWidth, innerHeight);
+  renderer.setClearColor(0x000000, 1);
 
   // Restore scene
   scene.background = savedBackground || new THREE.Color(0x0a0e17);
+  if (gridHelper) gridHelper.visible = true;
 
-  // Restore model
+  // Restore model position
   if (loadedModel) {
     loadedModel.visible = true;
     loadedModel.position.set(0, 0, 0);
   }
 
-  // Restore camera
+  // Restore camera & controls
   if (savedCameraPos) camera.position.copy(savedCameraPos);
   if (savedControlsTarget) controls.target.copy(savedControlsTarget);
+  controls.enabled = true;
   controls.update();
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
 
   // Restore UI
   document.getElementById('ar-overlay').style.display = 'none';
