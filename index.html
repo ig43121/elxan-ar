@@ -592,6 +592,8 @@ let modelPlaced = false;
 let savedCameraPos = null;
 let savedControlsTarget = null;
 let savedBackground = null;
+let autoPlaceTimer = 0;      // counts stable hit-test frames for auto-placement
+let autoPlaceReady = false;   // true when we have enough stable frames
 
 function setupARReticle() {
   const geo = new THREE.RingGeometry(0.1, 0.11, 32).rotateX(-Math.PI / 2);
@@ -655,9 +657,13 @@ async function launchWebXR() {
     // Hide model until placed
     if (loadedModel) loadedModel.visible = false;
 
+    // Reset auto-place state
+    autoPlaceTimer = 0;
+    autoPlaceReady = false;
+
     // Update status text
     const statusText = urlOrigin
-      ? `📍 ${urlOrigin.l || urlOrigin.g} — Fläche anvisieren und tippen`
+      ? `📍 ${urlOrigin.l || urlOrigin.g} — Richte Handy auf den Boden beim QR-Code...`
       : 'Fläche anvisieren und tippen zum Platzieren';
     document.getElementById('ar-status').textContent = statusText;
     document.getElementById('ar-placed-msg').style.display = 'none';
@@ -713,20 +719,34 @@ function xrRenderLoop(time, frame) {
       if (pose) {
         arReticle.visible = true;
         arReticle.matrix.fromArray(pose.transform.matrix);
+
+        // Auto-place when opened via QR code:
+        // Wait ~2 seconds of stable surface detection, then place automatically
+        if (urlOrigin && !autoPlaceReady) {
+          autoPlaceTimer++;
+          // ~60 frames ≈ 2 seconds at 30fps
+          const pct = Math.min(100, Math.round(autoPlaceTimer / 60 * 100));
+          document.getElementById('ar-status').textContent =
+            `📍 Erkenne Fläche... ${pct}%`;
+          if (autoPlaceTimer >= 60) {
+            autoPlaceReady = true;
+            placeModel();
+          }
+        }
       }
     } else {
       arReticle.visible = false;
+      // Reset counter if surface lost
+      if (urlOrigin && !autoPlaceReady) autoPlaceTimer = 0;
     }
   }
 
   renderer.render(scene, camera);
 }
 
-function onARSelect(event) {
-  if (modelPlaced) return;
-  if (!arReticle || !arReticle.visible) return;
+function placeModel() {
+  if (modelPlaced || !arReticle) return;
 
-  // Place model at reticle position
   const pos = new THREE.Vector3();
   const quat = new THREE.Quaternion();
   const scl = new THREE.Vector3();
@@ -734,11 +754,11 @@ function onARSelect(event) {
 
   if (loadedModel) {
     if (glbArOrigin && glbArOrigin.origin_applied) {
-      // V3 export with origin: model (0,0,0) = the base point
-      // Place so model origin sits at the reticle hit position
+      // V3 export: model origin (0,0,0) = base point from AutoCAD
+      // Place model origin at the detected surface (where QR code is)
       loadedModel.position.copy(pos);
     } else {
-      // Legacy/no origin: center the model bounding box at hit point
+      // Legacy: center the bounding box at hit point
       const box = new THREE.Box3().setFromObject(loadedModel);
       const center = box.getCenter(new THREE.Vector3());
       loadedModel.position.set(pos.x - center.x, pos.y - center.y, pos.z - center.z);
@@ -750,20 +770,36 @@ function onARSelect(event) {
   arReticle.visible = false;
 
   // Update overlay
-  const label = urlOrigin ? ` (${urlOrigin.l || urlOrigin.g})` : '';
-  document.getElementById('ar-status').textContent = `Tippen für Kabeldetails${label}`;
+  const label = urlOrigin ? (urlOrigin.l || urlOrigin.g) : '';
+  document.getElementById('ar-status').textContent =
+    label ? `✅ ${label} — Gehe herum` : 'Tippen für Kabeldetails';
   const placedMsg = document.getElementById('ar-placed-msg');
+  placedMsg.textContent = label
+    ? `✅ Platziert an ${label} — Gehe herum um zu erkunden`
+    : '✅ Platziert — Gehe herum um zu erkunden';
   placedMsg.style.display = 'block';
-  if (urlOrigin) {
-    placedMsg.textContent = `✅ Platziert an ${urlOrigin.l || urlOrigin.g} — Gehe herum`;
-  }
+  if (navigator.vibrate) navigator.vibrate(200);
   setTimeout(() => { placedMsg.style.display = 'none'; }, 3000);
+}
+
+function onARSelect(event) {
+  // Tap to place (manual — used when no QR / or to reposition)
+  if (!arReticle || !arReticle.visible) return;
+  if (modelPlaced) {
+    // Already placed — re-place at new position
+    modelPlaced = false;
+    placeModel();
+    return;
+  }
+  placeModel();
 }
 
 function onARSessionEnd() {
   xrSession = null;
   xrHitTestSource = null;
   modelPlaced = false;
+  autoPlaceTimer = 0;
+  autoPlaceReady = false;
 
   // Disable XR mode
   renderer.xr.enabled = false;
