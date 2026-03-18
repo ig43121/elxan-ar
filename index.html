@@ -1,0 +1,784 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>ELXAN AR Viewer</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Outfit:wght@300;500;700&display=swap');
+
+  :root {
+    --bg: #0a0e17; --surface: #131926; --surface2: #1a2235;
+    --border: #2a3555; --text: #e2e8f0; --text-dim: #8892a8;
+    --accent: #3b82f6; --ok: #10b981; --fehler: #ef4444;
+    --schacht: #a78bfa; --tray: #94a3b8; --warn: #f59e0b;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: 'Outfit', sans-serif;
+    background: var(--bg); color: var(--text);
+    height: 100vh; width: 100vw;
+    overflow: hidden; touch-action: none;
+  }
+
+  /* ── Loading ── */
+  #loading-screen {
+    position: fixed; inset: 0; z-index: 1000; background: var(--bg);
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    transition: opacity 0.5s;
+  }
+  #loading-screen.hidden { opacity: 0; pointer-events: none; }
+  .loader-logo { font-family: 'JetBrains Mono', monospace; font-size: 2.2rem; font-weight: 700; letter-spacing: 0.15em; background: linear-gradient(135deg, var(--accent), var(--ok)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; margin-bottom: 2rem; }
+  .loader-bar-track { width: 200px; height: 3px; background: var(--surface2); border-radius: 2px; overflow: hidden; }
+  .loader-bar { height: 100%; width: 0%; background: linear-gradient(90deg, var(--accent), var(--ok)); border-radius: 2px; transition: width 0.3s; }
+  .loader-status { margin-top: 1rem; font-size: 0.85rem; color: var(--text-dim); font-family: 'JetBrains Mono', monospace; text-align: center; padding: 0 20px; }
+
+  /* ── Top Bar ── */
+  #top-bar {
+    position: fixed; top: 0; left: 0; right: 0; z-index: 100;
+    padding: 12px 16px;
+    background: linear-gradient(180deg, rgba(10,14,23,0.95) 0%, rgba(10,14,23,0) 100%);
+    display: flex; align-items: center; justify-content: space-between;
+    pointer-events: none;
+  }
+  #top-bar > * { pointer-events: auto; }
+  .logo { font-family: 'JetBrains Mono', monospace; font-size: 1rem; font-weight: 700; letter-spacing: 0.1em; background: linear-gradient(135deg, var(--accent), var(--ok)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+  #stats-pill { display: flex; gap: 10px; background: var(--surface); border: 1px solid var(--border); border-radius: 20px; padding: 5px 14px; font-size: 0.75rem; }
+  .stat { display: flex; align-items: center; gap: 4px; }
+  .stat-dot { width: 8px; height: 8px; border-radius: 50%; }
+  .stat-dot.ok { background: var(--ok); }
+  .stat-dot.err { background: var(--fehler); }
+  .stat-dot.sch { background: var(--schacht); }
+  .stat-dot.tray { background: var(--tray); }
+
+  /* ── Buttons ── */
+  .btn { display: none; align-items: center; justify-content: center; gap: 6px; padding: 10px 16px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); color: var(--text); font-size: 0.85rem; cursor: pointer; pointer-events: auto; }
+  .btn:active { transform: scale(0.95); background: var(--surface2); }
+  .btn-ar { background: linear-gradient(135deg, var(--ok), #059669); border: none; color: white; }
+  #bottom-bar { position: fixed; bottom: 20px; left: 0; right: 0; display: flex; justify-content: center; gap: 10px; z-index: 100; pointer-events: none; }
+  #bottom-bar > * { pointer-events: auto; }
+
+  /* ── File Input ── */
+  .file-zone { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); text-align: center; z-index: 50; }
+  .file-zone.hidden { display: none; }
+  .file-label { display: inline-flex; flex-direction: column; align-items: center; gap: 12px; padding: 40px 50px; border: 2px dashed var(--border); border-radius: 16px; background: var(--surface); cursor: pointer; }
+  .file-label:active { border-color: var(--accent); }
+  .file-icon { font-size: 3rem; }
+  .file-text { font-size: 1rem; color: var(--text-dim); }
+  .file-hint { font-size: 0.75rem; color: var(--text-dim); opacity: 0.6; }
+  #file-input { display: none; }
+
+  /* ── Info Panel ── */
+  #info-panel {
+    position: fixed; bottom: 0; left: 0; right: 0; z-index: 200;
+    max-height: 65vh; overflow-y: auto;
+    background: var(--surface); border-top: 1px solid var(--border);
+    border-radius: 16px 16px 0 0;
+    transform: translateY(100%);
+    transition: transform 0.35s cubic-bezier(0.32, 0.72, 0, 1);
+    -webkit-overflow-scrolling: touch;
+  }
+  #info-panel.visible { transform: translateY(0); }
+  .info-handle { width: 36px; height: 4px; background: var(--border); border-radius: 2px; margin: 10px auto 0; }
+  .info-close { position: absolute; top: 8px; right: 12px; background: none; border: none; color: var(--text-dim); font-size: 1.2rem; cursor: pointer; padding: 8px; }
+  .info-header { display: flex; align-items: center; gap: 12px; padding: 16px 20px 8px; }
+  .info-icon { width: 44px; height: 44px; border-radius: 12px; display: flex; align-items: center; justify-content: center; font-size: 1.4rem; flex-shrink: 0; }
+  .info-icon.ok { background: rgba(16,185,129,0.15); }
+  .info-icon.err { background: rgba(239,68,68,0.15); }
+  .info-icon.sch { background: rgba(167,139,250,0.15); }
+  .info-icon.tray { background: rgba(148,163,184,0.15); }
+  .info-title { font-size: 1.1rem; font-weight: 600; }
+  .info-subtitle { font-size: 0.8rem; color: var(--text-dim); margin-top: 2px; }
+  .info-meta { font-size: 0.7rem; color: var(--warn); opacity: 0.8; padding: 4px 20px; }
+  .info-details { padding: 8px 20px 16px; }
+  .info-row { display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid rgba(42,53,85,0.5); font-size: 0.85rem; }
+  .info-row:last-child { border-bottom: none; }
+  .info-row-label { color: var(--text-dim); }
+  .info-row-value { font-weight: 500; text-align: right; max-width: 60%; }
+  .info-row-value.ok { color: var(--ok); }
+  .info-row-value.err { color: var(--fehler); }
+  .info-row-value.warn { color: var(--warn); }
+
+  .circuit-section { margin-top: 8px; padding: 0 20px 16px; }
+  .circuit-section-title { font-size: 0.8rem; font-weight: 600; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 8px; }
+  .circuit-card { background: var(--surface2); border: 1px solid var(--border); border-radius: 10px; padding: 10px 14px; margin-bottom: 6px; }
+  .circuit-card-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; }
+  .circuit-name { font-weight: 600; font-size: 0.9rem; font-family: 'JetBrains Mono', monospace; }
+  .circuit-status { font-size: 0.7rem; padding: 2px 8px; border-radius: 8px; font-weight: 600; }
+  .circuit-status.ok { background: rgba(16,185,129,0.15); color: var(--ok); }
+  .circuit-status.err { background: rgba(239,68,68,0.15); color: var(--fehler); }
+  .circuit-detail { font-size: 0.78rem; color: var(--text-dim); display: flex; gap: 12px; flex-wrap: wrap; }
+
+  /* ── Node List ── */
+  #node-list-panel { position: fixed; top: 0; right: 0; bottom: 0; width: min(320px, 85vw); z-index: 250; background: var(--surface); border-left: 1px solid var(--border); transform: translateX(100%); transition: transform 0.3s cubic-bezier(0.32, 0.72, 0, 1); display: flex; flex-direction: column; }
+  #node-list-panel.visible { transform: translateX(0); }
+  .node-list-header { padding: 16px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border); }
+  .node-list-title { font-weight: 600; font-size: 1rem; }
+  .node-list-close { background: none; border: none; color: var(--text-dim); font-size: 1.3rem; cursor: pointer; }
+  .node-search { margin: 10px 16px; padding: 8px 12px; background: var(--surface2); border: 1px solid var(--border); border-radius: 8px; color: var(--text); font-size: 0.85rem; outline: none; width: calc(100% - 32px); }
+  .node-search::placeholder { color: var(--text-dim); }
+  .node-list-items { flex: 1; overflow-y: auto; padding: 8px; -webkit-overflow-scrolling: touch; }
+  .node-item { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 8px; cursor: pointer; border-bottom: 1px solid rgba(42,53,85,0.3); }
+  .node-item:active { background: var(--surface2); }
+  .node-item-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+  .node-item-text { font-size: 0.8rem; line-height: 1.3; }
+
+  /* ── AR Hint overlay ── */
+  #ar-hint {
+    display: none; position: fixed; inset: 0; z-index: 500;
+    background: rgba(10,14,23,0.95);
+    flex-direction: column; align-items: center; justify-content: center;
+    padding: 30px; text-align: center;
+  }
+  #ar-hint.visible { display: flex; }
+  .ar-hint-title { font-size: 1.3rem; font-weight: 700; margin-bottom: 16px; }
+  .ar-hint-step { font-size: 0.9rem; color: var(--text-dim); margin: 6px 0; line-height: 1.5; }
+  .ar-hint-step b { color: var(--ok); }
+  .ar-hint-btn { margin-top: 24px; padding: 12px 28px; background: var(--accent); color: white; border: none; border-radius: 12px; font-size: 1rem; font-weight: 600; cursor: pointer; }
+  .ar-hint-btn:active { opacity: 0.8; }
+  .ar-hint-download { margin-top: 12px; padding: 12px 28px; background: var(--ok); color: white; border: none; border-radius: 12px; font-size: 1rem; font-weight: 600; cursor: pointer; text-decoration: none; display: inline-block; }
+
+  .tap-ring { position: fixed; width: 40px; height: 40px; margin: -20px 0 0 -20px; border: 2px solid var(--accent); border-radius: 50%; animation: tapExpand 0.5s ease-out forwards; pointer-events: none; z-index: 999; }
+  @keyframes tapExpand { 0% { transform: scale(0.3); opacity: 1; } 100% { transform: scale(1.5); opacity: 0; } }
+
+  ::-webkit-scrollbar { width: 4px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+</style>
+</head>
+<body>
+
+<div id="loading-screen">
+  <div class="loader-logo">ELXAN</div>
+  <div class="loader-bar-track"><div class="loader-bar" id="loader-bar"></div></div>
+  <div class="loader-status" id="loader-status">Initialisiere...</div>
+</div>
+
+<canvas id="canvas3d"></canvas>
+
+<div id="top-bar">
+  <div class="logo">ELXAN AR</div>
+  <div id="stats-pill"></div>
+</div>
+
+<div class="file-zone" id="file-zone">
+  <label class="file-label" for="file-input">
+    <div class="file-icon">📁</div>
+    <div class="file-text">GLB Datei laden</div>
+    <div class="file-hint">Export aus AutoCAD ELXAN Plugin</div>
+  </label>
+  <input type="file" id="file-input" accept=".glb,.gltf,model/gltf-binary,model/gltf+json,application/octet-stream,*/*">
+</div>
+
+<div id="bottom-bar">
+  <button class="btn" id="btn-list" onclick="toggleNodeList()">📋 Liste</button>
+  <button class="btn" id="btn-reset" onclick="resetView()">🎯 Reset</button>
+  <button class="btn btn-ar" id="btn-ar" onclick="startAR()">🥽 AR</button>
+</div>
+
+<div id="info-panel">
+  <div class="info-handle"></div>
+  <button class="info-close" onclick="hideInfo()">✕</button>
+  <div id="info-panel-content"></div>
+</div>
+
+<div id="node-list-panel">
+  <div class="node-list-header">
+    <div class="node-list-title">Elemente</div>
+    <button class="node-list-close" onclick="toggleNodeList()">✕</button>
+  </div>
+  <input class="node-search" id="node-search" placeholder="Suchen..." oninput="filterNodeList()">
+  <div class="node-list-items" id="node-list-items"></div>
+</div>
+
+<!-- WebXR AR Overlay (shown during immersive-ar) -->
+<div id="ar-overlay" style="display:none; position:fixed; z-index:9999; top:0; left:0; right:0; bottom:0; pointer-events:none;">
+  <div id="ar-status" style="
+    position:absolute; top:20px; left:50%; transform:translateX(-50%);
+    background:rgba(10,14,23,0.85); color:#e2e8f0;
+    padding:8px 20px; border-radius:20px;
+    font-family:'Outfit',sans-serif; font-size:0.9rem;
+    border:1px solid #2a3555; pointer-events:none;">
+    Fläche anvisieren und tippen zum Platzieren
+  </div>
+  <button id="ar-exit-btn" onclick="endAR()" style="
+    position:absolute; bottom:40px; left:50%; transform:translateX(-50%);
+    background:rgba(239,68,68,0.9); color:white;
+    border:none; border-radius:14px;
+    padding:14px 32px; font-size:1rem; font-weight:600;
+    font-family:'Outfit',sans-serif; cursor:pointer;
+    pointer-events:auto;">
+    ✕ AR beenden
+  </button>
+  <div id="ar-placed-msg" style="
+    display:none; position:absolute; top:80px;
+    left:50%; transform:translateX(-50%);
+    background:rgba(16,185,129,0.9); color:white;
+    padding:8px 20px; border-radius:20px;
+    font-family:'Outfit',sans-serif; font-size:0.85rem;
+    pointer-events:none;">
+    ✅ Platziert — Gehe herum um zu erkunden
+  </div>
+</div>
+
+<!-- AR Hint Overlay (fallback for non-WebXR) -->
+<div id="ar-hint">
+  <div style="font-size:3rem;margin-bottom:12px;">🥽</div>
+  <div class="ar-hint-title">AR Modus</div>
+  <div class="ar-hint-step">Die GLB Datei wird heruntergeladen.</div>
+  <div class="ar-hint-step">Öffne sie danach mit dem <b>Standard 3D-Viewer</b> deines Handys für AR.</div>
+  <div class="ar-hint-step" style="margin-top:12px;font-size:0.8rem;color:var(--text-dim);">
+    Tipp: Für Kabeldetails und Stromkreis-Infos<br>verwende den <b>3D Viewer</b> hier in der App.
+  </div>
+  <a class="ar-hint-download" id="ar-download-btn" href="#" download="ELXAN_AR.glb">📥 GLB herunterladen für AR</a>
+  <button class="ar-hint-btn" onclick="closeArHint()">← Zurück zum 3D Viewer</button>
+</div>
+
+<script type="importmap">
+{ "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+} }
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+
+let scene, camera, renderer, controls, canvas;
+let loadedModel = null;
+let meshNodeMap = new Map();
+let glbMetadata = null;
+let glbArOrigin = null;   // AR origin from export
+let glbHasZAxis = false;  // V3 export with Z
+let glbBlobUrl = null;
+let glbFilename = 'ELXAN_AR.glb';
+
+const raycaster = new THREE.Raycaster();
+const pointer = new THREE.Vector2();
+const loadingScreen = document.getElementById('loading-screen');
+const loaderBar = document.getElementById('loader-bar');
+const loaderStatus = document.getElementById('loader-status');
+const infoPanel = document.getElementById('info-panel');
+const infoPanelContent = document.getElementById('info-panel-content');
+
+function init() {
+  setProgress(20, 'Lade Three.js...');
+  canvas = document.getElementById('canvas3d');
+  scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x0a0e17);
+  camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 0.01, 1000);
+  camera.position.set(0, 3, 5);
+
+  renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true, powerPreference: 'high-performance' });
+  renderer.setSize(innerWidth, innerHeight);
+  renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+  renderer.shadowMap.enabled = true;
+
+  scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+  const dir = new THREE.DirectionalLight(0xffffff, 1.0);
+  dir.position.set(5, 10, 7); dir.castShadow = true; scene.add(dir);
+  scene.add(new THREE.HemisphereLight(0x8892a8, 0x1a2235, 0.4));
+
+  const grid = new THREE.GridHelper(20, 40, 0x2a3555, 0x1a2235);
+  grid.material.opacity = 0.4; grid.material.transparent = true; scene.add(grid);
+
+  controls = new OrbitControls(camera, canvas);
+  controls.enableDamping = true; controls.dampingFactor = 0.08;
+
+  addEventListener('resize', onResize);
+  canvas.addEventListener('pointerdown', onPointerDown);
+  canvas.addEventListener('pointerup', onPointerUp);
+  document.getElementById('file-input').addEventListener('change', onFileSelect);
+
+  const originInfo = urlOrigin ? ` | 📍 ${urlOrigin.l || urlOrigin.g || 'Origin'}` : '';
+  setProgress(100, 'Bereit — GLB Datei laden' + originInfo);
+  setTimeout(() => loadingScreen.classList.add('hidden'), 600);
+  renderer.setAnimationLoop(() => { controls.update(); renderer.render(scene, camera); });
+}
+
+function onResize() { camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight); }
+
+// ── Tap vs Drag detection ──
+let pDown = null, pTime = 0;
+function onPointerDown(e) { pDown = { x: e.clientX, y: e.clientY }; pTime = Date.now(); }
+function onPointerUp(e) {
+  if (!pDown) return;
+  const dx = e.clientX - pDown.x, dy = e.clientY - pDown.y;
+  if (Math.sqrt(dx*dx + dy*dy) < 15 && Date.now() - pTime < 400) onTap(e);
+  pDown = null;
+}
+
+function onFileSelect(e) {
+  const file = e.target.files[0]; if (!file) return;
+  glbFilename = file.name;
+  loadingScreen.classList.remove('hidden');
+  setProgress(10, 'Lade ' + file.name + '...');
+  const reader = new FileReader();
+  reader.onprogress = ev => { if (ev.lengthComputable) setProgress(10 + (ev.loaded / ev.total) * 40, 'Lese...'); };
+  reader.onload = ev => {
+    setProgress(60, 'Parse GLB...');
+    if (glbBlobUrl) URL.revokeObjectURL(glbBlobUrl);
+    glbBlobUrl = URL.createObjectURL(new Blob([ev.target.result], { type: 'model/gltf-binary' }));
+    loadGLB(ev.target.result, file.name);
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+function loadGLB(buffer, filename) {
+  const loader = new GLTFLoader();
+  loader.parse(buffer, '', gltf => {
+    setProgress(80, 'Szene...');
+    if (loadedModel) scene.remove(loadedModel);
+    meshNodeMap.clear(); glbMetadata = null;
+
+    if (gltf.parser?.json?.extras) {
+      try { glbMetadata = gltf.parser.json.extras;
+        glbHasZAxis = glbMetadata.has_z_axis === true;
+        glbArOrigin = glbMetadata.ar_origin || null;
+        const ver = glbMetadata.elxan_version || '?';
+        console.log(`📱 ELXAN ${ver}:`, Object.keys(glbMetadata.nodes || {}).length, 'nodes',
+          glbHasZAxis ? '(3D mit Z)' : '(2D flach)',
+          glbArOrigin ? `| AR Origin: ${glbArOrigin.label || glbArOrigin.geschoss}` : '');
+      } catch(e) {}
+    }
+
+    loadedModel = gltf.scene;
+    loadedModel.traverse(child => {
+      if (!child.isMesh) return;
+      let n = child;
+      while (n && (!n.name || n.name.startsWith('mesh') || n.name.startsWith('primitive'))) n = n.parent;
+      meshNodeMap.set(child, n?.name || child.name || 'Unbekannt');
+      if (child.material) {
+        child.material = child.material.clone();
+        child.material.transparent = true;
+        child.userData.origOpacity = child.material.opacity;
+        child.userData.origEmissive = child.material.emissive ? child.material.emissive.clone() : new THREE.Color(0);
+      }
+    });
+    scene.add(loadedModel);
+
+    const box = new THREE.Box3().setFromObject(loadedModel);
+    const center = box.getCenter(new THREE.Vector3());
+    const sz = box.getSize(new THREE.Vector3());
+    const d = Math.max(sz.x, sz.y, sz.z) * 1.5;
+    camera.position.set(center.x + d*0.5, center.y + d*0.7, center.z + d*0.5);
+    controls.target.copy(center); controls.update();
+
+    updateStats(); buildNodeList();
+    document.getElementById('file-zone').classList.add('hidden');
+    document.getElementById('btn-reset').style.display = 'flex';
+    document.getElementById('btn-list').style.display = 'flex';
+    document.getElementById('btn-ar').style.display = 'flex';
+
+    // Update AR download link
+    document.getElementById('ar-download-btn').href = glbBlobUrl;
+    document.getElementById('ar-download-btn').download = filename;
+
+    const ver = glbMetadata?.elxan_version || 'Legacy';
+    const zInfo = glbHasZAxis ? ' | 3D' : ' | 2D';
+    const arInfo = glbArOrigin ? ' | AR✓' : '';
+    const mi = glbMetadata ? `📱 ${ver} (${Object.keys(glbMetadata.nodes||{}).length} Nodes${zInfo}${arInfo})` : '⚠ Legacy';
+    setProgress(100, 'Fertig! ' + mi);
+    setTimeout(() => loadingScreen.classList.add('hidden'), 600);
+  }, err => { setProgress(0, '❌ ' + err.message); });
+}
+
+function updateStats() {
+  const names = new Set(meshNodeMap.values());
+  let ok=0,er=0,sc=0,tr=0;
+  names.forEach(n => { if(n.includes('⚠'))er++; else if(n.includes('✅'))ok++; else if(n.toLowerCase().includes('schacht'))sc++; else if(n.includes('🏗'))tr++; });
+  document.getElementById('stats-pill').innerHTML =
+    (ok?`<div class="stat"><div class="stat-dot ok"></div>${ok} OK</div>`:'')+
+    (er?`<div class="stat"><div class="stat-dot err"></div>${er} Fehler</div>`:'')+
+    (sc?`<div class="stat"><div class="stat-dot sch"></div>${sc} Schacht</div>`:'')+
+    (tr?`<div class="stat"><div class="stat-dot tray"></div>${tr} Trassen</div>`:'');
+}
+
+// ── Node List ──
+function buildNodeList() {
+  const c = document.getElementById('node-list-items'); c.innerHTML = '';
+  [...new Set(meshNodeMap.values())].sort().forEach(name => {
+    const item = document.createElement('div'); item.className = 'node-item';
+    let col = 'var(--text-dim)';
+    if(name.includes('⚠'))col='var(--fehler)'; else if(name.includes('✅'))col='var(--ok)'; else if(name.includes('🏗'))col='var(--tray)';
+    item.innerHTML = `<div class="node-item-dot" style="background:${col}"></div><div class="node-item-text">${name}</div>`;
+    item.onclick = () => { showInfo(name); highlightByName(name); if(innerWidth<768)toggleNodeList(); };
+    c.appendChild(item);
+  });
+}
+function filterNodeList() {
+  const q = document.getElementById('node-search').value.toLowerCase();
+  document.querySelectorAll('.node-item').forEach(i => { i.style.display = i.querySelector('.node-item-text').textContent.toLowerCase().includes(q)?'':'none'; });
+}
+window.toggleNodeList = () => document.getElementById('node-list-panel').classList.toggle('visible');
+
+function highlightByName(name) {
+  meshNodeMap.forEach((n,m) => { if(m.material?.emissive) { m.material.emissive.copy(m.userData.origEmissive); m.material.opacity=m.userData.origOpacity; } });
+  meshNodeMap.forEach((n,m) => { if(n===name && m.material?.emissive) m.material.emissive.set(0x3b82f6); });
+}
+
+// ── Tap → Raycast ──
+let selectedMesh = null;
+function onTap(event) {
+  if (!loadedModel) return;
+  const r = canvas.getBoundingClientRect();
+  pointer.x = ((event.clientX-r.left)/r.width)*2-1;
+  pointer.y = -((event.clientY-r.top)/r.height)*2+1;
+  raycaster.setFromCamera(pointer, camera);
+  const hits = raycaster.intersectObject(loadedModel, true);
+
+  const ring = document.createElement('div'); ring.className='tap-ring';
+  ring.style.left=event.clientX+'px'; ring.style.top=event.clientY+'px';
+  document.body.appendChild(ring); setTimeout(()=>ring.remove(),600);
+
+  if(selectedMesh) { selectedMesh.material.emissive?.copy(selectedMesh.userData.origEmissive); selectedMesh.material.opacity=selectedMesh.userData.origOpacity; selectedMesh=null; }
+  if(!hits.length) { hideInfo(); return; }
+
+  const mesh = hits[0].object;
+  const nodeName = meshNodeMap.get(mesh);
+  if(!nodeName||nodeName==='Unbekannt') { hideInfo(); return; }
+  selectedMesh = mesh;
+  if(mesh.material.emissive) mesh.material.emissive.set(0x3b82f6);
+  showInfo(nodeName);
+}
+
+// ── AR Hint ──
+window.showArHint = function() { document.getElementById('ar-hint').classList.add('visible'); };
+window.closeArHint = function() { document.getElementById('ar-hint').classList.remove('visible'); };
+
+// ══════════════════════════════════════════════════════
+// INFO PANEL
+// ══════════════════════════════════════════════════════
+function showInfo(nodeName) {
+  const meta = glbMetadata?.nodes?.[nodeName];
+  infoPanelContent.innerHTML = meta ? buildRichInfo(nodeName, meta) : buildLegacyInfo(nodeName);
+  infoPanel.classList.add('visible');
+}
+
+function buildRichInfo(nodeName, meta) {
+  if (meta.type === 'cable' || meta.type === 'schacht') {
+    const isErr = meta.has_fehler, isSch = meta.is_schacht;
+    const ic = isErr?'err':isSch?'sch':'ok';
+    const icon = isErr?'⚠️':isSch?'🔌':'✅';
+    const st = isErr?'FEHLER':isSch?'SCHACHT':'OK';
+
+    let h = `<div class="info-header"><div class="info-icon ${ic}">${icon}</div><div>
+      <div class="info-title">Kabelweg ${meta.verteiler}</div>
+      <div class="info-subtitle">${meta.circuit_count} SK · ${meta.length_m} m</div>
+    </div></div>
+    <div class="info-details">
+      <div class="info-row"><span class="info-row-label">Status</span><span class="info-row-value ${ic}">${st}</span></div>
+      <div class="info-row"><span class="info-row-label">Verteiler</span><span class="info-row-value">${meta.verteiler}</span></div>
+      <div class="info-row"><span class="info-row-label">Länge</span><span class="info-row-value">${meta.length_m} m</span></div>
+      <div class="info-row"><span class="info-row-label">Stromkreise</span><span class="info-row-value">${meta.circuit_count}</span></div>
+    </div>`;
+
+    const circuits = meta.circuits || [];
+    if (circuits.length) {
+      h += `<div class="circuit-section"><div class="circuit-section-title">Stromkreise auf diesem Kabelweg</div>`;
+      circuits.forEach(c => {
+        const cOk = c.status && c.status!=='Fehler' && c.status!=='ERR';
+        const badge = c.status ? `<span class="circuit-status ${cOk?'ok':'err'}">${cOk?'✅':'⚠️'} ${c.status}</span>` : '';
+        const det = [];
+        if(c.kabel_type) det.push(`🔌 ${c.kabel_type}`);
+        if(c.sicherung) det.push(`🔒 ${c.sicherung}`);
+        if(c.du_result) { const dv=parseFloat(c.du_result); det.push(`<span style="color:var(--${dv>3?'fehler':dv>2?'warn':'ok'})">⚡ dU: ${c.du_result}%</span>`); }
+        h += `<div class="circuit-card"><div class="circuit-card-header"><span class="circuit-name">${c.circuit||'?'}</span>${badge}</div>
+          ${det.length?`<div class="circuit-detail">${det.map(d=>`<span>${d}</span>`).join('')}</div>`:''}
+          ${c.verteiler?`<div class="circuit-detail" style="margin-top:3px"><span style="color:var(--text-dim)">VT: ${c.verteiler}</span></div>`:''}
+        </div>`;
+      });
+      h += '</div>';
+    }
+    return h;
+
+  } else if (meta.type === 'tray') {
+    return `<div class="info-header"><div class="info-icon tray">🏗️</div><div>
+      <div class="info-title">${meta.tray_type}</div>
+      <div class="info-subtitle">${meta.width_mm} mm · ${meta.vis_state}</div>
+    </div></div>
+    <div class="info-details">
+      <div class="info-row"><span class="info-row-label">Typ</span><span class="info-row-value">${meta.tray_type}</span></div>
+      <div class="info-row"><span class="info-row-label">Breite</span><span class="info-row-value">${meta.width_mm} mm</span></div>
+      <div class="info-row"><span class="info-row-label">Höhe</span><span class="info-row-value">${meta.height_mm} mm</span></div>
+      <div class="info-row"><span class="info-row-label">Sichtbarkeit</span><span class="info-row-value">${meta.vis_state}</span></div>
+      <div class="info-row"><span class="info-row-label">Block</span><span class="info-row-value">${meta.block_name}</span></div>
+      <div class="info-row"><span class="info-row-label">Position</span><span class="info-row-value" style="font-family:'JetBrains Mono',monospace;font-size:0.75rem">${meta.position}</span></div>
+    </div>`;
+  }
+  return buildLegacyInfo(nodeName);
+}
+
+function buildLegacyInfo(nodeName) {
+  const i = parseNodeName(nodeName);
+  if(i.type==='cable') {
+    const ic=i.fehler?'err':i.schacht?'sch':'ok';
+    return `<div class="info-header"><div class="info-icon ${ic}">${i.fehler?'⚠️':i.schacht?'🔌':'✅'}</div><div>
+      <div class="info-title">Kabelweg ${i.verteiler}</div><div class="info-subtitle">${nodeName}</div></div></div>
+      <div class="info-meta">⚠ Älterer Export — für volle Details neu exportieren</div>
+      <div class="info-details">
+        <div class="info-row"><span class="info-row-label">Status</span><span class="info-row-value ${ic}">${i.fehler?'FEHLER':'OK'}</span></div>
+        <div class="info-row"><span class="info-row-label">Verteiler</span><span class="info-row-value">${i.verteiler}</span></div>
+        ${i.circuits?`<div class="info-row"><span class="info-row-label">Stromkreise</span><span class="info-row-value">${i.circuits}</span></div>`:''}
+        ${i.length?`<div class="info-row"><span class="info-row-label">Länge</span><span class="info-row-value">${i.length}</span></div>`:''}
+      </div>`;
+  }
+  if(i.type==='tray') return `<div class="info-header"><div class="info-icon tray">🏗️</div><div>
+    <div class="info-title">${i.trayType}</div><div class="info-subtitle">${nodeName}</div></div></div>
+    <div class="info-details">${i.width?`<div class="info-row"><span class="info-row-label">Breite</span><span class="info-row-value">${i.width}</span></div>`:''}
+    ${i.visState?`<div class="info-row"><span class="info-row-label">Typ</span><span class="info-row-value">${i.visState}</span></div>`:''}</div>`;
+  return `<div class="info-header"><div class="info-icon ok">📦</div><div><div class="info-title">Element</div><div class="info-subtitle">${nodeName}</div></div></div>`;
+}
+
+function hideInfo() { infoPanel.classList.remove('visible');
+  if(selectedMesh){selectedMesh.material.emissive?.copy(selectedMesh.userData.origEmissive);selectedMesh.material.opacity=selectedMesh.userData.origOpacity;selectedMesh=null;} }
+window.hideInfo = hideInfo;
+
+function parseNodeName(name) {
+  if(name.includes('⚠')||name.includes('✅')) {
+    const p=name.split('|').map(s=>s.trim()), vt=p[0]?.replace('⚠','').replace('✅','').trim()||'';
+    let ci='',le=''; for(let i=1;i<p.length;i++){if(p[i].match(/\d+\s*SK/i))ci=p[i]; else if(p[i].match(/[\d.,]+\s*m/))le=p[i];}
+    return{type:'cable',verteiler:vt,fehler:name.includes('⚠'),schacht:name.toLowerCase().includes('schacht'),circuits:ci,length:le};
+  }
+  if(name.includes('🏗')){const p=name.split('|').map(s=>s.trim()),wm=name.match(/(\d+)\s*mm/);
+    return{type:'tray',trayType:p[0]?.replace('🏗','').trim()||'Kabeltrasse',width:wm?wm[1]+' mm':'',visState:p[1]||''};}
+  return{type:'unknown'};
+}
+
+window.resetView = function() {
+  if(!loadedModel)return;
+  const b=new THREE.Box3().setFromObject(loadedModel),c=b.getCenter(new THREE.Vector3()),s=b.getSize(new THREE.Vector3()),d=Math.max(s.x,s.y,s.z)*1.5;
+  camera.position.set(c.x+d*0.5,c.y+d*0.7,c.z+d*0.5);controls.target.copy(c);controls.update();hideInfo();
+};
+
+function setProgress(p,t){loaderBar.style.width=p+'%';loaderStatus.textContent=t;}
+
+// ══════════════════════════════════════════════════════
+// URL ORIGIN — read AR base point from URL parameters
+// ══════════════════════════════════════════════════════
+
+let urlOrigin = null; // origin from QR-code URL params
+
+function readUrlOrigin() {
+  const p = new URLSearchParams(location.search);
+  if (p.has('ox') && p.has('oy')) {
+    urlOrigin = {
+      ox: parseFloat(p.get('ox')) || 0,
+      oy: parseFloat(p.get('oy')) || 0,
+      oz: parseFloat(p.get('oz')) || 0,
+      g:  p.get('g') || '',
+      gh: parseFloat(p.get('gh')) || 0,
+      l:  p.get('l') || '',
+      d:  p.get('d') || ''
+    };
+    console.log('📍 AR Origin from URL:', urlOrigin);
+  }
+}
+readUrlOrigin();
+
+// ══════════════════════════════════════════════════════
+// WebXR IMMERSIVE AR
+// ══════════════════════════════════════════════════════
+
+let xrSession = null;
+let xrHitTestSource = null;
+let xrRefSpace = null;
+let arReticle = null;
+let modelPlaced = false;
+let savedCameraPos = null;
+let savedControlsTarget = null;
+let savedBackground = null;
+
+function setupARReticle() {
+  const geo = new THREE.RingGeometry(0.1, 0.11, 32).rotateX(-Math.PI / 2);
+  const mat = new THREE.MeshBasicMaterial({ color: 0xffffff, side: THREE.DoubleSide });
+  arReticle = new THREE.Mesh(geo, mat);
+  arReticle.matrixAutoUpdate = false;
+  arReticle.visible = false;
+  scene.add(arReticle);
+}
+
+window.startAR = async function() {
+  if (!loadedModel) { alert('Zuerst GLB Datei laden!'); return; }
+
+  // Check WebXR support
+  if (!navigator.xr) { showArHint(); return; }
+  let supported = false;
+  try { supported = await navigator.xr.isSessionSupported('immersive-ar'); } catch(e) {}
+  if (!supported) { showArHint(); return; }
+
+  launchWebXR();
+};
+
+async function launchWebXR() {
+  try {
+    xrSession = await navigator.xr.requestSession('immersive-ar', {
+      requiredFeatures: ['hit-test'],
+      optionalFeatures: ['dom-overlay', 'light-estimation'],
+      domOverlay: { root: document.getElementById('ar-overlay') }
+    });
+
+    // Save state
+    savedCameraPos = camera.position.clone();
+    savedControlsTarget = controls.target.clone();
+    savedBackground = scene.background;
+
+    // Setup renderer for XR
+    renderer.xr.enabled = true;
+    renderer.setPixelRatio(1);
+    scene.background = null;
+
+    // Setup reticle
+    if (!arReticle) setupARReticle();
+    arReticle.visible = false;
+    modelPlaced = false;
+
+    // Hide model until placed
+    if (loadedModel) loadedModel.visible = false;
+
+    // Show AR overlay
+    document.getElementById('ar-overlay').style.display = 'block';
+    const statusText = urlOrigin
+      ? `📍 QR erkannt: ${urlOrigin.l || urlOrigin.g} — Fläche anvisieren und tippen`
+      : 'Fläche anvisieren und tippen zum Platzieren';
+    document.getElementById('ar-status').textContent = statusText;
+    document.getElementById('ar-placed-msg').style.display = 'none';
+
+    // Hide 3D viewer UI
+    document.getElementById('top-bar').style.display = 'none';
+    document.getElementById('bottom-bar').style.display = 'none';
+    hideInfo();
+
+    // Set XR session on renderer
+    await renderer.xr.setSession(xrSession);
+
+    // Get reference spaces
+    xrRefSpace = await xrSession.requestReferenceSpace('local');
+    const viewerSpace = await xrSession.requestReferenceSpace('viewer');
+
+    // Request hit-test source
+    xrHitTestSource = await xrSession.requestHitTestSource({ space: viewerSpace });
+
+    // Tap to place
+    xrSession.addEventListener('select', onARSelect);
+
+    // Session end handler
+    xrSession.addEventListener('end', onARSessionEnd);
+
+    // XR render loop
+    renderer.setAnimationLoop(xrRenderLoop);
+
+  } catch(err) {
+    console.error('AR start error:', err);
+    showArHint();
+  }
+}
+
+function xrRenderLoop(time, frame) {
+  if (!frame) return;
+
+  // Hit-test for reticle placement
+  if (xrHitTestSource && !modelPlaced) {
+    const hitResults = frame.getHitTestResults(xrHitTestSource);
+    if (hitResults.length > 0) {
+      const hit = hitResults[0];
+      const pose = hit.getPose(xrRefSpace);
+      if (pose) {
+        arReticle.visible = true;
+        arReticle.matrix.fromArray(pose.transform.matrix);
+      }
+    } else {
+      arReticle.visible = false;
+    }
+  }
+
+  renderer.render(scene, camera);
+}
+
+function onARSelect(event) {
+  if (modelPlaced) return;
+  if (!arReticle || !arReticle.visible) return;
+
+  // Place model at reticle position
+  const pos = new THREE.Vector3();
+  const quat = new THREE.Quaternion();
+  const scl = new THREE.Vector3();
+  arReticle.matrix.decompose(pos, quat, scl);
+
+  if (loadedModel) {
+    if (glbArOrigin && glbArOrigin.origin_applied) {
+      // V3 export with origin: model (0,0,0) = the base point
+      // Place so model origin sits at the reticle hit position
+      loadedModel.position.copy(pos);
+    } else {
+      // Legacy/no origin: center the model bounding box at hit point
+      const box = new THREE.Box3().setFromObject(loadedModel);
+      const center = box.getCenter(new THREE.Vector3());
+      loadedModel.position.set(pos.x - center.x, pos.y - center.y, pos.z - center.z);
+    }
+    loadedModel.visible = true;
+  }
+
+  modelPlaced = true;
+  arReticle.visible = false;
+
+  // Update overlay
+  const label = urlOrigin ? ` (${urlOrigin.l || urlOrigin.g})` : '';
+  document.getElementById('ar-status').textContent = `Tippen für Kabeldetails${label}`;
+  const placedMsg = document.getElementById('ar-placed-msg');
+  placedMsg.style.display = 'block';
+  if (urlOrigin) {
+    placedMsg.textContent = `✅ Platziert an ${urlOrigin.l || urlOrigin.g} — Gehe herum`;
+  }
+  setTimeout(() => { placedMsg.style.display = 'none'; }, 3000);
+}
+
+function onARSessionEnd() {
+  xrSession = null;
+  xrHitTestSource = null;
+  renderer.xr.enabled = false;
+  modelPlaced = false;
+  urlOrigin = null;
+
+  // Restore renderer
+  renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+  renderer.setSize(innerWidth, innerHeight);
+
+  // Restore scene
+  scene.background = savedBackground || new THREE.Color(0x0a0e17);
+
+  // Restore model
+  if (loadedModel) {
+    loadedModel.visible = true;
+    loadedModel.position.set(0, 0, 0);
+  }
+
+  // Restore camera
+  if (savedCameraPos) camera.position.copy(savedCameraPos);
+  if (savedControlsTarget) controls.target.copy(savedControlsTarget);
+  controls.update();
+
+  // Restore UI
+  document.getElementById('ar-overlay').style.display = 'none';
+  document.getElementById('top-bar').style.display = '';
+  document.getElementById('bottom-bar').style.display = '';
+
+  // Remove reticle
+  if (arReticle) { scene.remove(arReticle); arReticle = null; }
+
+  // Restart normal render loop
+  renderer.setAnimationLoop(() => { controls.update(); renderer.render(scene, camera); });
+}
+
+window.endAR = function() {
+  if (xrSession) xrSession.end();
+};
+
+init();
+</script>
+</body>
+</html>
